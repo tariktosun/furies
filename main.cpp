@@ -1,104 +1,112 @@
-#include "mbed_synth.h"
+#include "mbed.h"
+#define PI 3.1415
+#define RES 256
 
-AnalogOut synth_pin(p18);
-AnalogIn freq_pot_in(p20);
-AnalogIn vol_pot_in(p19);
-DigitalOut led_red(p21);
-DigitalOut led_green(p22);
+Ticker timer; //interrupt to generate sine wave
+
+AnalogOut sine_wave(p18);
+PwmOut outp(p22);
+Serial pc(USBTX, USBRX); // tx, rx
+AnalogIn inp(p19);
+
+DigitalOut led_red(p24);
+DigitalOut led_green(p25);
 DigitalOut led_blue(p23);
 
-DigitalOut temp(LED3);
-DigitalOut tmp(LED2);
-MbedSynth audsynth(&synth_pin,&temp);
-Serial pc(USBTX, USBRX); // tx, rx
+volatile float ain;
+float wt;
+float sine_freq;
+float new_freq;
+float volt_freq;
+float sine_period;
+float sine_amp;
+float sine_vals[256], *sp, *last; //setup array for sine values, a pointer to access the array and one for the end of the array
+float volt;
 
-Ticker synth_tick;
+float init_vin =0.0;
 
-float VOLdata;
-float FREQdata;
+void sine();
+void sine_table();
 
-uint16_t freq_arr[] = {16,32,65,130,261,523,1046,2093,4186,7900};
 
-int main(void) 
+int main() 
 {
+   
+    sine_freq = 440;
+    //new_freq = 220;
+    pc.baud( 9600 );
+    sine_amp=3.3/20; // peak to peak sine amplitude in V
 
-  tmp = 1;
- 
-  pc.baud(921600);
-  audsynth.init_synth(); // Initialize synth
-  int samp_us = 1.0/SAMP_FREQ*1e6; // Determine sample period in microseconds
-  audsynth.set_freq(7900); // 16-7902
-  
-  synth_tick.attach_us( &audsynth, &MbedSynth::send_vals, samp_us); // Call send_vals every samp_us
-  
-  while(1)
-  {
-      //audsynth.set_freq(notes[octave][C_NOTE]);
-      FREQdata=freq_pot_in*10.0;
-      //audsynth.newFreq=freq_arr[(int)FREQdata];
-      pc.printf("%d\n\r",freq_arr[(int)FREQdata]);
-      audsynth.vol=vol_pot_in+0.01;
-      //pc.printf("%f\n\r",VOLdata);
-      switch(freq_arr[(int)FREQdata])
-      {
-        case 16:
-            led_red=1;
-            led_green=0;
-            led_blue=0;
-            break;
-        case 32:
-            led_red=1;
-            led_green=0;
-            led_blue=0;
-            break;
-        case 65:
-            led_red=1;
-            led_green=1;
-            led_blue=0;
-            break;
-        case 130:
-            led_red=1;
-            led_green=0;
-            led_blue=1;
-            break;
-        case 261:
-            led_red=1;
-            led_green=0;
-            led_blue=1;
-            break;
-        case 523:
-            led_red=1;
-            led_green=1;
-            led_blue=0;
-            break;
-        case 1046:
-            led_red=1;
-            led_green=1;
-            led_blue=0;
-            break;
-        case 2093:
-            led_red=0;
-            led_green=1;
-            led_blue=1;
-            break;
-        case 4186:
-            led_red=0;
-            led_green=1;
-            led_blue=1;
-            break;
-        case 7900:
-            led_red=1;
-            led_green=1;
-            led_blue=1;
-            break;   
-        default:
-            led_red=1;
-            led_green=0;
-            led_blue=0;
-            break;    
-      }
-      audsynth.set_freq(freq_arr[(int)FREQdata]);
-  }
-  
+    wt = 0.01;
     
+    outp.period(0.00001f);  // freq
+    outp.write(1.00f);  // 50% duty cycle
+    
+    sine_table(); 
+ 
+    sine_period=(1000000/sine_freq)/RES; // period between calling sine routine
+    timer.attach_us(&sine,sine_period); // start interrupt   
+    
+    while(1) 
+    {  
+        volt = inp.read();
+        pc.printf("\n\r v_in= %f",volt);
+        if(init_vin==volt)
+        {
+            led_red=1;
+            led_green=0;
+            led_blue=0;
+            new_freq=sine_freq;
+        }
+        else if(volt>0.2)
+        {
+            led_red=0;
+            led_green=0;
+            led_blue=1;
+            new_freq=220;
+        }
+        if(sine_freq!=new_freq)
+        {
+            sine_freq = sine_freq*(1-wt)+new_freq*wt;
+            sine_period=(1000000/sine_freq)/RES; // period between calling sine routine
+            timer.attach_us(&sine,sine_period); // start interrupt   
+            
+        }
+        else
+        {
+            sine_freq=440;
+            pc.printf("\n\r sine_freq= %f",sine_freq);
+            sine_period=(1000000/sine_freq)/RES; // period between calling sine routine
+            timer.attach_us(&sine,sine_period); // start interrupt  
+        }
+        //pc.printf("\n\r sine_freq= %f",sine_freq);
+             
+    } //while loop
+ }
+
+
+
+void sine_table() 
+{ // function to load sine values into array and start interrupt
+    float *p, i;
+    
+    sine_amp=sine_amp/3.3; //convert from p/p voltage to percentage
+    p=sine_vals; //point to beginning of array
+    sp=p; //set sp
+    for (i=0; i<RES; i++)
+    {
+        *p=sine_amp*sin(i*2*PI/RES);
+        p++;
+    }
+
+    last=p-1; //last element in array
+
 }
+    
+void sine() 
+{ //interrupt fn
+    
+    if (sp>last) sp=sine_vals; //reset sp back to beginning
+    sine_wave.write((*sp)+0.5);
+    sp++;
+} 
